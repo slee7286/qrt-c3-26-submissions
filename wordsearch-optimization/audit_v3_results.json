@@ -1,0 +1,118 @@
+{
+  "checks": {
+    "shelf_exhaustive": {
+      "input_multisets": 1471,
+      "separated_grids": 4465,
+      "no_forbidden_grids": 2942,
+      "scope": "All subsets of size 0..4 from binary words of lengths 1..3; all indicated sides; original reversal/duplicate/substrings retained in oracle."
+    },
+    "validator": {
+      "boards": 836,
+      "comparisons": 279316,
+      "exhaustive": "Every ABC-safe grid for N=1,2; every binary grid for N=3; every binary forbidden of lengths 1..2N+2; required of lengths <=N.",
+      "random": "240 additional grids, mixed lists, N=1..8, forbidden lengths up to 4N."
+    },
+    "solver_internals": {
+      "domain_start_comparisons": 13056,
+      "block_rotations": 288,
+      "partial_board_legality": 64
+    },
+    "solver_transitions": {
+      "transitions": 3600,
+      "valid_fills": 11,
+      "real_searches": 72,
+      "independently_valid_search_grids": 40,
+      "note": "Search success count is wall-clock dependent; every observed return was independently checked."
+    },
+    "forced_branch_tests": {
+      "legacy_fallback_grid": [
+        "ABZZZZZZZZZZ",
+        "ZZZZZZZZZZZZ",
+        "CDZZZZZZZZZZ",
+        "ZZZZZZZZZZZZ",
+        "EFZZZZZZZZZZ",
+        "ZZZZZZZZZZZZ",
+        "GHZZZZZZZZZZ",
+        "ZZZZZZZZZZZZ",
+        "IJZZZZZZZZZZ",
+        "ZZZZZZZZZZZZ",
+        "KLZZZZZZZZZZ",
+        "ZZZZZZZZZZZZ"
+      ],
+      "no_safe_feasible_witness": [
+        "AB",
+        "CD"
+      ],
+      "no_safe_forced_expiry_error": "No valid grid found within the search budget.",
+      "compact_example_grid": [
+        "ABZCDZ",
+        "ZZZZZZ",
+        "EFZGHZ",
+        "ZZZZZZ",
+        "IJZKLZ",
+        "ZZZZZZ"
+      ],
+      "invalid_search_candidate_rejected": true
+    }
+  },
+  "counterexamples": {
+    "missing_horizontal_interword_separator": {
+      "grid": [
+        "ABCDZ",
+        "ZZZZZ",
+        "ZZZZZ",
+        "ZZZZZ",
+        "ZZZZZ"
+      ],
+      "required": [
+        "AB",
+        "CD"
+      ],
+      "forbidden": [
+        "BC"
+      ]
+    },
+    "missing_trailing_wrap_separator": {
+      "grid": [
+        "ABC",
+        "ZZZ",
+        "ZZZ"
+      ],
+      "required": [
+        "ABC"
+      ],
+      "forbidden": [
+        "CAB"
+      ]
+    },
+    "odd_side_too_many_content_rows_wrap": {
+      "grid": [
+        "AZZ",
+        "ZZZ",
+        "BZZ"
+      ],
+      "required": [
+        "A",
+        "B"
+      ],
+      "forbidden": [
+        "BA"
+      ]
+    },
+    "long_periodic_forbidden_must_not_be_dropped": {
+      "grid": [
+        "AB",
+        "ZZ"
+      ],
+      "required": [
+        "AB"
+      ],
+      "forbidden": [
+        "ABABA"
+      ]
+    }
+  },
+  "failures": [],
+  "elapsed_seconds": 19.55104499999925,
+  "passed": true
+}

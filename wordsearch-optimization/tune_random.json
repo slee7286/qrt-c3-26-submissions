@@ -1,0 +1,34 @@
+[
+  {
+    "case": "random26-125",
+    "module": "generate_grid_v3",
+    "trial": 0,
+    "M": 125,
+    "S": 914,
+    "longest": 10,
+    "N_lower": 10,
+    "N": 29,
+    "score": 63.92949569839826,
+    "upper_bound": 100,
+    "gap": 36.07050430160174,
+    "seconds": 2.917152399999395,
+    "valid": true,
+    "error": null
+  },
+  {
+    "case": "random26-125",
+    "module": "experiments.v3_tuned",
+    "trial": 0,
+    "M": 125,
+    "S": 914,
+    "longest": 10,
+    "N_lower": 10,
+    "N": 29,
+    "score": 63.92949569839826,
+    "upper_bound": 100,
+    "gap": 36.07050430160174,
+    "seconds": 2.917077600000084,
+    "valid": true,
+    "error": null
+  }
+]

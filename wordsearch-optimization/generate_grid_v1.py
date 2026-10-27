@@ -1,0 +1,487 @@
+#!/bin/python3
+import math
+import os
+import random
+import re
+import sys
+import time
+
+_popcount = getattr(int, 'bit_count', lambda x: bin(x).count('1'))
+
+
+def _patterns(words, n):
+    out = set()
+    for w in words:
+        if len(w) > n:
+            if any(w[i] != w[i % n] for i in range(n, len(w))):
+                continue
+            w = w[:n]
+        out.add(w)
+        out.add(w[::-1])
+    return out
+
+
+def _valid(grid, required, forbidden):
+    n = len(grid)
+    if n < max((len(w) for w in required), default=1):
+        return False
+    if not n or any(len(row) != n or any(not 'A' <= c <= 'Z' for c in row) for row in grid):
+        return False
+    lines = []
+    for d in range(4):
+        for a in range(n):
+            if d == 0:
+                s = grid[a]
+            elif d == 1:
+                s = ''.join(grid[k][a] for k in range(n))
+            elif d == 2:
+                s = ''.join(grid[k][(a+k) % n] for k in range(n))
+            else:
+                s = ''.join(grid[k][(a-k) % n] for k in range(n))
+            lines.append(s+s[:-1])
+    for w in required:
+        if not any(w in s or w[::-1] in s for s in lines):
+            return False
+    patterns = _patterns(forbidden, n)
+    if patterns:
+        matcher = re.compile('|'.join(sorted(patterns, key=len)))
+        if any(matcher.search(s) for s in lines):
+            return False
+    return True
+
+
+class _Geometry:
+    def __init__(self, n):
+        self.n = n
+        self.size = n*n
+        self.all = (1 << self.size)-1
+        rep = self.all // ((1 << n)-1)
+        self.low = [((1 << k)-1)*rep for k in range(n)]
+        self.maps = [[], [], [], []]
+        self.inverse = [[0]*self.size for _ in range(4)]
+        for r in range(n):
+            for c in range(n):
+                p = r*n+c
+                indices = (p, c*n+r, ((c-r) % n)*n+r, ((c+r) % n)*n+r)
+                for d, q in enumerate(indices):
+                    self.maps[d].append(q)
+                    self.inverse[d][q] = p
+
+    def rotate(self, bits, k):
+        if not k:
+            return bits
+        low = self.low[self.n-k]
+        return ((bits >> k) & low) | ((bits << (self.n-k)) & (self.all ^ low))
+
+    def cells(self, family, start, length):
+        a, b = divmod(start, self.n)
+        inv = self.inverse[family]
+        base = a*self.n
+        return tuple(inv[base+(b+i) % self.n] for i in range(length))
+
+
+def _pick(mask, rng):
+    rank = rng.randrange(_popcount(mask))
+    offset = 0
+    while mask.bit_length() > 1:
+        half = mask.bit_length()//2
+        low = mask & ((1 << half)-1)
+        count = _popcount(low)
+        if rank < count:
+            mask = low
+        else:
+            rank -= count
+            mask >>= half
+            offset += half
+    return offset
+
+
+def _extreme(domain, masks, maximum):
+    planes = []
+    for bits in masks:
+        carry = bits & domain
+        j = 0
+        while carry:
+            if j == len(planes):
+                planes.append(carry)
+                break
+            planes[j], carry = planes[j] ^ carry, planes[j] & carry
+            j += 1
+    score = 0
+    for j in range(len(planes)-1, -1, -1):
+        ones = domain & planes[j]
+        zeros = domain ^ ones
+        chosen = ones if maximum else zeros
+        if chosen:
+            domain = chosen
+            if maximum:
+                score |= 1 << j
+        else:
+            if not maximum:
+                score |= 1 << j
+    return score, domain
+
+
+class _Solver:
+    def __init__(self, n, words, forbidden, rng):
+        self.geo = _Geometry(n)
+        self.words = [tuple(ord(c)-65 for c in w) for w in words]
+        self.forbidden = forbidden
+        patterns = _patterns(forbidden, n)
+        self.matcher = re.compile(b'|'.join(w.encode() for w in sorted(patterns, key=len))) if patterns else None
+        self.max_forbidden = max(map(len, patterns), default=0)
+        self.rng = rng
+        self.board = [-1]*self.geo.size
+        self.masks = [[0]*26 for _ in range(4)]
+        self.blank = [self.geo.all]*4
+        self.lines = [bytearray(b'['*n) for _ in range(4*n)] if self.matcher else None
+        self.owners = [0]*self.geo.size
+        self.placed = [None]*len(words)
+        self.weights = [1.0]*len(words)
+        self.safe = next((ord(c)-65 for c in 'ZXQJKVBPYGFWMUCDLHR SNIATOE'.replace(' ', '') if not any(c in w for w in forbidden)), None)
+        banned = {ord(w)-65 for w in forbidden if len(w) == 1}
+        self.alphabet = [i for i in range(26) if i not in banned]
+
+    def set_cell(self, p, ch):
+        old = self.board[p]
+        if old == ch:
+            return
+        self.board[p] = ch
+        n = self.geo.n
+        for d in range(4):
+            q = self.geo.maps[d][p]
+            bit = 1 << q
+            if old >= 0:
+                self.masks[d][old] ^= bit
+            else:
+                self.blank[d] ^= bit
+            if ch >= 0:
+                self.masks[d][ch] |= bit
+            else:
+                self.blank[d] |= bit
+            if self.lines is not None:
+                a, b = divmod(q, n)
+                self.lines[d*n+a][b] = ch+65 if ch >= 0 else 91
+
+    def legal(self, cells):
+        if not self.matcher:
+            return True
+        n = self.geo.n
+        affected = {d*n+self.geo.maps[d][p]//n for p in cells for d in range(4)}
+        k = self.max_forbidden-1
+        for a in affected:
+            s = self.lines[a]
+            if self.matcher.search(s+s[:k]):
+                return False
+        return True
+
+    def domains(self, word):
+        result = []
+        for d in range(4):
+            blank = self.blank[d]
+            for w in (word, word[::-1]):
+                domain = self.geo.all
+                # Most restrictive letters first accelerates failed placements.
+                offsets = sorted(range(len(w)), key=lambda i: _popcount(self.masks[d][w[i]]))
+                for i in offsets:
+                    domain &= self.geo.rotate(blank | self.masks[d][w[i]], i)
+                    if not domain:
+                        break
+                result.append(domain)
+        return result
+
+    def add(self, wi, cells, word):
+        changed = []
+        for p, ch in zip(cells, word):
+            if self.board[p] < 0:
+                self.set_cell(p, ch)
+                changed.append(p)
+        if not self.legal(changed):
+            for p in changed:
+                self.set_cell(p, -1)
+            return False
+        bit = 1 << wi
+        for p in cells:
+            self.owners[p] |= bit
+        self.placed[wi] = (cells, word)
+        return True
+
+    def remove(self, wi):
+        assignment = self.placed[wi]
+        if assignment is None:
+            return
+        keep = ~(1 << wi)
+        for p in assignment[0]:
+            self.owners[p] &= keep
+            if not self.owners[p]:
+                self.set_cell(p, -1)
+        self.placed[wi] = None
+
+    def greedy_place(self, wi, domains=None):
+        word = self.words[wi]
+        domains = self.domains(word) if domains is None else domains[:]
+        for attempt in range(18):
+            choices = []
+            best = -1
+            for d, domain in enumerate(domains):
+                if not domain:
+                    continue
+                family = d//2
+                occupied = self.geo.all ^ self.blank[family]
+                score, starts = _extreme(domain, (self.geo.rotate(occupied, i) for i in range(len(word))), True)
+                if score > best:
+                    best, choices = score, [(d, starts)]
+                elif score == best:
+                    choices.append((d, starts))
+            if not choices:
+                return False
+            d, starts = self.rng.choice(choices)
+            start = _pick(starts, self.rng)
+            domains[d] &= ~(1 << start)
+            w = word if d % 2 == 0 else word[::-1]
+            cells = self.geo.cells(d//2, start, len(w))
+            if self.add(wi, cells, w):
+                return True
+        return False
+
+    def fill(self):
+        holes = [p for p, ch in enumerate(self.board) if ch < 0]
+        if self.safe is not None:
+            for p in holes:
+                self.set_cell(p, self.safe)
+            return self.grid()
+        for restart in range(5):
+            self.rng.shuffle(holes)
+            used = []
+            for p in holes:
+                letters = self.alphabet[:]
+                self.rng.shuffle(letters)
+                for ch in letters:
+                    self.set_cell(p, ch)
+                    if self.legal((p,)):
+                        used.append(p)
+                        break
+                else:
+                    self.set_cell(p, -1)
+                    break
+            else:
+                return self.grid()
+            for p in used:
+                self.set_cell(p, -1)
+        return None
+
+    def grid(self):
+        n = self.geo.n
+        return [''.join(chr(ch+65) for ch in self.board[r*n:(r+1)*n]) for r in range(n)]
+
+    def greedy(self, deadline):
+        remaining = list(range(len(self.words)))
+        self.rng.shuffle(remaining)
+        remaining.sort(key=lambda wi: -len(self.words[wi])*(0.86+0.28*self.rng.random()))
+        while remaining:
+            if time.perf_counter() > deadline:
+                return False
+            options = []
+            for wi in remaining[:4]:
+                domains = self.domains(self.words[wi])
+                count = sum(_popcount(x) for x in domains)
+                options.append((count, wi, domains))
+            _, wi, domains = min(options, key=lambda x: x[0])
+            self.greedy_place(wi, domains)
+            remaining.remove(wi)
+        return all(p is not None for p in self.placed)
+
+    def eject(self, wi):
+        word = self.words[wi]
+        candidates = []
+        for d in range(8):
+            family = d//2
+            w = word if d % 2 == 0 else word[::-1]
+            masks = [self.geo.rotate(self.geo.all ^ (self.blank[family] | self.masks[family][ch]), i) for i, ch in enumerate(w)]
+            domain = self.geo.all
+            for _ in range(4):
+                _, starts = _extreme(domain, masks, False)
+                if not starts:
+                    break
+                start = _pick(starts, self.rng)
+                domain &= ~(1 << start)
+                cells = self.geo.cells(family, start, len(w))
+                victims = 0
+                fresh = 0
+                for p, ch in zip(cells, w):
+                    if self.board[p] >= 0 and self.board[p] != ch:
+                        victims |= self.owners[p]
+                    if self.board[p] != ch:
+                        fresh += 1
+                bits = victims
+                cost = 0.0
+                while bits:
+                    bit = bits & -bits
+                    cost += self.weights[bit.bit_length()-1]
+                    bits ^= bit
+                cost = _popcount(victims) + 0.035*cost + 0.018*fresh + self.rng.random()*0.45
+                candidates.append((cost, cells, w, victims))
+        candidates.sort(key=lambda x: x[0])
+        for _, cells, w, victims in candidates[:8]:
+            saved = []
+            bits = victims
+            while bits:
+                bit = bits & -bits
+                j = bit.bit_length()-1
+                saved.append((j, self.placed[j]))
+                self.remove(j)
+                bits ^= bit
+            if self.add(wi, cells, w):
+                return True
+            for j, (old_cells, old_word) in saved:
+                self.add(j, old_cells, old_word)
+        return False
+
+    def search(self, deadline, steps):
+        self.greedy(deadline)
+        best = sum(p is not None for p in self.placed)
+        snapshot = self.placed[:]
+        stale = 0
+        for step in range(steps):
+            missing = [i for i, p in enumerate(self.placed) if p is None]
+            if not missing:
+                return self.fill()
+            if time.perf_counter() >= deadline:
+                return None
+            wi = max(missing, key=lambda i: self.weights[i]+self.rng.random()*0.8)
+            self.weights[wi] = min(6.0, self.weights[wi]+0.15)
+            if not self.greedy_place(wi):
+                self.eject(wi)
+            count = sum(p is not None for p in self.placed)
+            if count > best:
+                best, stale = count, 0
+                snapshot = self.placed[:]
+            else:
+                stale += 1
+            if stale >= max(30, len(self.words)) or count < best-max(2, len(self.words)//40):
+                for j in range(len(self.words)):
+                    self.remove(j)
+                for j, assignment in enumerate(snapshot):
+                    if assignment is not None:
+                        self.add(j, *assignment)
+                # Resume from the best partial packing instead of allowing the
+                # ejection chain to drift into a much worse state.
+                stale = 0
+        return self.fill() if all(p is not None for p in self.placed) else None
+
+
+def generate_grid(required_words, forbidden_words):
+    required = list(required_words)
+    forbidden = list(set(forbidden_words))
+    if any(any(not 'A' <= c <= 'Z' for c in w) for w in required+forbidden):
+        raise ValueError('Words must use uppercase A-Z.')
+    if '' in forbidden:
+        raise ValueError('An empty forbidden word makes the instance impossible.')
+    if len({w for w in forbidden if len(w) == 1}) == 26:
+        raise ValueError('Every letter is forbidden.')
+    forbidden_regex = re.compile('|'.join(_patterns(forbidden, max(map(len, forbidden), default=1)))) if forbidden else None
+    if forbidden_regex and any(forbidden_regex.search(w) for w in required):
+        raise ValueError('A required word contains a forbidden word or its reverse.')
+    canonical = sorted({min(w, w[::-1]) for w in required if w}, key=lambda w: (-len(w), w))
+    words = []
+    for w in canonical:
+        if not any(w in v or w[::-1] in v for v in words):
+            words.append(w)
+    lower = max(1, max(map(len, required), default=1))
+    letter_counts = [0]*26
+    for w in words:
+        counts = [0]*26
+        for c in w:
+            counts[ord(c)-65] += 1
+        letter_counts = [max(a, b) for a, b in zip(letter_counts, counts)]
+    lower = max(lower, math.isqrt(max(0, sum(letter_counts)-1))+1)
+    # A word occupying an entire cycle forces all of its cyclic rotations,
+    # including periodic forbidden words longer than the cycle.
+    if forbidden:
+        pats = _patterns(forbidden, lower)
+        matcher = re.compile('|'.join(sorted(pats))) if pats else None
+        if matcher and any(len(w) == lower and matcher.search(w+w[:-1]) for w in words):
+            lower += 1
+    score_sum = sum(map(len, required))
+    start = time.perf_counter()
+    budget = min(3.5, 0.25+0.014*len(words)+0.001*sum(map(len, words)))
+    deadline = start+budget
+    rng = random.Random(61789)
+    best = None
+    # A guaranteed fallback exists when a letter occurs in no forbidden word.
+    safe = next((c for c in 'ZXQJKVBPYGFWMUCDLHRSNIATOE' if not any(c in w for w in forbidden)), None)
+    fallback_n = max(lower, len(words), 1) if not forbidden else max(lower+1, 2*len(words), 1)
+    target = max(lower, math.isqrt(10*score_sum//17))
+    if sum(map(len, words)) <= lower*lower:
+        target = lower
+    # Small sizes can be the only feasible sizes under forbidden constraints.
+    # Probe them before jumping to the score target; feasibility is not monotone.
+    if forbidden:
+        probe_deadline = min(deadline, start+budget*0.15)
+        for probe_n in range(lower, target):
+            if time.perf_counter() >= probe_deadline:
+                break
+            solver = _Solver(probe_n, words, forbidden, rng)
+            grid = solver.search(probe_deadline, max(4, len(words)//2))
+            if grid is not None and _valid(grid, required, forbidden):
+                best = grid
+                break
+    n = target
+    while best is None:
+        slice_deadline = min(deadline, time.perf_counter()+max(0.03, budget*0.20))
+        solver = _Solver(n, words, forbidden, rng)
+        grid = solver.search(slice_deadline, max(30, len(words)*8))
+        if grid is not None and _valid(grid, required, forbidden):
+            best = grid
+            break
+        if time.perf_counter() >= deadline:
+            break
+        n += 1 if forbidden else max(1, n//10)
+    if best is not None:
+        while len(best) > lower and time.perf_counter() < deadline:
+            n = len(best)-1
+            solver = _Solver(n, words, forbidden, rng)
+            grid = solver.search(min(deadline, time.perf_counter()+max(0.04, budget*0.25)), max(50, len(words)*12))
+            if grid is not None and _valid(grid, required, forbidden):
+                best = grid
+            elif time.perf_counter() < deadline:
+                continue
+            else:
+                break
+        return best
+    if safe is not None:
+        n = fallback_n
+        rows = [safe*n for _ in range(n)]
+        for i, w in enumerate(words):
+            r = i if not forbidden else 2*i
+            rows[r] = w+safe*(n-len(w))
+        if _valid(rows, required, forbidden):
+            return rows
+    raise RuntimeError('No valid grid found within the search budget.')
+
+
+if __name__ == '__main__':
+    fptr = open(os.environ['OUTPUT_PATH'], 'w')
+
+    required_words_count = int(input().strip())
+
+    required_words = []
+
+    for _ in range(required_words_count):
+        required_words_item = input()
+        required_words.append(required_words_item)
+
+    forbidden_words_count = int(input().strip())
+
+    forbidden_words = []
+
+    for _ in range(forbidden_words_count):
+        forbidden_words_item = input()
+        forbidden_words.append(forbidden_words_item)
+
+    result = generate_grid(required_words, forbidden_words)
+
+    fptr.write('\n'.join([' '.join(x) for x in result]))
+    fptr.write('\n')
+
+    fptr.close()

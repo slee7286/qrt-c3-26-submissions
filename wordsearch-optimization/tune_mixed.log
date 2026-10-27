@@ -1,0 +1,4 @@
+{"case": "random26-mixed-100", "module": "generate_grid_v3", "trial": 0, "M": 100, "S": 818, "longest": 13, "N_lower": 13, "N": 27, "score": 66.00500282417494, "upper_bound": 100, "gap": 33.99499717582506, "seconds": 2.469379299999673, "valid": true, "error": null}
+{"case": "random26-mixed-100", "module": "experiments.v3_tuned", "trial": 0, "M": 100, "S": 818, "longest": 13, "N_lower": 13, "N": 27, "score": 66.00500282417494, "upper_bound": 100, "gap": 33.99499717582506, "seconds": 2.4714018000004216, "valid": true, "error": null}
+SUMMARY generate_grid_v3 valid 1 / 1 mean_score 66.00500282417494 mean_gap 33.99499717582506 seconds 2.469379299999673
+SUMMARY experiments.v3_tuned valid 1 / 1 mean_score 66.00500282417494 mean_gap 33.99499717582506 seconds 2.4714018000004216
